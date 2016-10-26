@@ -56,19 +56,26 @@ namespace OwnSpace.CrmConnector
         }
 
         // ReSharper disable once UnusedMember.Global
-        public static IOrganizationService GetOrganizationServiceProxy(Configuration config)
+        public static OrganizationServiceProxy GetOrganizationServiceProxy(Configuration config, Action<OrganizationServiceProxy> enableProxyTypes = null)
         {
+            OrganizationServiceProxy proxy;
             if (config.EndpointType == AuthenticationProviderType.ActiveDirectory &&
                 config.OrganizationServiceManagement != null)
             {
-                return new ManagedTokenOrganizationServiceProxy(config.OrganizationServiceManagement, config.Credentials);
+                proxy = new ManagedTokenOrganizationServiceProxy(config.OrganizationServiceManagement, config.Credentials);
+            }
+            else
+            {
+                proxy = GetProxy<IOrganizationService, OrganizationServiceProxy>(config);
             }
 
-            return GetProxy<IOrganizationService, OrganizationServiceProxy>(config);
+            enableProxyTypes?.Invoke(proxy);
+
+            return proxy;
         }
 
         // ReSharper disable once UnusedMember.Global
-        public static IDiscoveryService GetDiscoveryServiceProxy(Configuration config)
+        public static DiscoveryServiceProxy GetDiscoveryServiceProxy(Configuration config)
         {
             // ToDo: inside GetProxy similar logic already exists
             if (config.EndpointType == AuthenticationProviderType.ActiveDirectory &&
