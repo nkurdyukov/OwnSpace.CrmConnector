@@ -11,19 +11,17 @@ using OwnSpace.CrmConnector.Helpers;
 
 namespace OwnSpace.CrmConnector
 {
+    // ReSharper disable once UnusedMember.Global
     public static class XrmConnection
     {
-        public static Uri GetOrganizationServiceUri(string url)
-        {
-            return new Uri(url + "/XRMServices/2011/Organization.svc");
-        }
+        // ReSharper disable once MemberCanBePrivate.Global
+        public static Uri GetOrganizationServiceUri(string url) => new Uri(url + "/XRMServices/2011/Organization.svc");
 
-        public static Uri GetDiscoveryServiceUri(string url)
-        {
-            return new Uri(url + "/XRMServices/2011/Discovery.svc");
-        }
+        // ReSharper disable once MemberCanBePrivate.Global
+        public static Uri GetDiscoveryServiceUri(string url) => new Uri(url + "/XRMServices/2011/Discovery.svc");
 
-        public static Configuration GetConfiguration(string url, string orgName)
+        // ReSharper disable once UnusedMember.Global
+        public static Configuration GetConfiguration(string url, string orgName = null)
         {
             var dialog =
                 new CredentialDialog
@@ -32,7 +30,7 @@ namespace OwnSpace.CrmConnector
                         ShowSaveCheckBox = true,
                         UseApplicationInstanceCredentialCache = true,
                         ShowUIForSavedCredentials = true,
-                        Target = "OwnTools_CRMSDK_",
+                        Target = "OwnSpace_CRMSDK_",
                         WindowTitle = "Credentials dialog"
                     };
             var dialogResult = dialog.ShowDialog();
@@ -45,19 +43,20 @@ namespace OwnSpace.CrmConnector
                 authCredentials.ClientCredentials.UserName.Password = dialog.Credentials.Password;
                 return
                     new Configuration
-                    {
-                        OrganizationUri = GetOrganizationServiceUri(url),
-                        DiscoveryUri = GetDiscoveryServiceUri(url),
-                        ServerAddress = url,
-                        OrganizationName = orgName,
-                        Credentials = authCredentials.ClientCredentials
-                    };
+                        {
+                            OrganizationUri = GetOrganizationServiceUri(url),
+                            DiscoveryUri = GetDiscoveryServiceUri(url),
+                            ServerAddress = url,
+                            OrganizationName = orgName,
+                            Credentials = authCredentials.ClientCredentials
+                        };
             }
 
             return null;
         }
 
-        public static OrganizationServiceProxy GetOrganizationServiceProxy(Configuration config)
+        // ReSharper disable once UnusedMember.Global
+        public static IOrganizationService GetOrganizationServiceProxy(Configuration config)
         {
             if (config.EndpointType == AuthenticationProviderType.ActiveDirectory &&
                 config.OrganizationServiceManagement != null)
@@ -68,7 +67,8 @@ namespace OwnSpace.CrmConnector
             return GetProxy<IOrganizationService, OrganizationServiceProxy>(config);
         }
 
-        public static DiscoveryServiceProxy GetDiscoveryServiceProxy(Configuration config)
+        // ReSharper disable once UnusedMember.Global
+        public static IDiscoveryService GetDiscoveryServiceProxy(Configuration config)
         {
             // ToDo: inside GetProxy similar logic already exists
             if (config.EndpointType == AuthenticationProviderType.ActiveDirectory &&
