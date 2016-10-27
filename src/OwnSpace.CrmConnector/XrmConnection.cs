@@ -31,48 +31,59 @@ namespace OwnSpace.CrmConnector
         }
 
         // ReSharper disable once UnusedMember.Global
-        public static Configuration GetConfiguration(string url, string orgName = null)
+        public static Configuration GetConfiguration(string url, string orgName = null, bool useDefaultCredentials = false)
         {
-            var dialog =
-                new CredentialDialog
-                    {
-                        MainInstruction = "Please enter your CRM credentials",
-                        ShowSaveCheckBox = true,
-                        UseApplicationInstanceCredentialCache = true,
-                        ShowUIForSavedCredentials = true,
-                        Target = "OwnSpace_CRMSDK_",
-                        WindowTitle = "Credentials dialog"
-                    };
-            var dialogResult = dialog.ShowDialog();
-            if (dialogResult == DialogResult.OK)
+            ClientCredentials clientCredentials;
+            if (useDefaultCredentials)
             {
-                dialog.ConfirmCredentials(true);
-
-                var authCredentials = new AuthenticationCredentials();
-                authCredentials.ClientCredentials.UserName.UserName = dialog.Credentials.UserName;
-                authCredentials.ClientCredentials.UserName.Password = dialog.Credentials.Password;
-                var organizationServiceUri = GetOrganizationServiceUri(url, orgName);
-                var discoveryServiceUri = GetDiscoveryServiceUri(url, orgName);
-                var organizationServiceManagement = ServiceConfigurationFactory.CreateManagement<IOrganizationService>(organizationServiceUri);
-                var discoveryServiceManagement = ServiceConfigurationFactory.CreateManagement<IDiscoveryService>(discoveryServiceUri);
-                var config =
-                    new Configuration
+                clientCredentials = new ClientCredentials();
+                clientCredentials.Windows.ClientCredential = CredentialCache.DefaultNetworkCredentials;
+            }
+            else
+            {
+                var dialog =
+                    new CredentialDialog
                         {
-                            OrganizationUri = organizationServiceUri,
-                            DiscoveryUri = discoveryServiceUri,
-                            ServerAddress = url,
-                            OrganizationName = orgName,
-                            Credentials = authCredentials.ClientCredentials,
-                            OrganizationServiceManagement = organizationServiceManagement,
-                            DiscoveryServiceManagement = discoveryServiceManagement,
-                            EndpointType = organizationServiceManagement.AuthenticationType
+                            MainInstruction = "Please enter your CRM credentials",
+                            ShowSaveCheckBox = true,
+                            UseApplicationInstanceCredentialCache = true,
+                            ShowUIForSavedCredentials = true,
+                            Target = "OwnSpace_CRMSDK_",
+                            WindowTitle = "Credentials dialog"
                         };
-                config.Credentials = FulfillCredentials(config);
+                var dialogResult = dialog.ShowDialog();
+                if (dialogResult == DialogResult.OK)
+                {
+                    dialog.ConfirmCredentials(true);
 
-                return config;
+                    var authCredentials = new AuthenticationCredentials();
+                    authCredentials.ClientCredentials.UserName.UserName = dialog.Credentials.UserName;
+                    authCredentials.ClientCredentials.UserName.Password = dialog.Credentials.Password;
+                    clientCredentials = authCredentials.ClientCredentials;
+                }
+                else
+                {
+                    return null;
+                }
             }
 
-            return null;
+            var organizationServiceUri = GetOrganizationServiceUri(url, orgName);
+            var discoveryServiceUri = GetDiscoveryServiceUri(url, orgName);
+            var organizationServiceManagement = ServiceConfigurationFactory.CreateManagement<IOrganizationService>(organizationServiceUri);
+            var discoveryServiceManagement = ServiceConfigurationFactory.CreateManagement<IDiscoveryService>(discoveryServiceUri);
+            var config =
+                new Configuration(url, orgName, organizationServiceManagement.AuthenticationType)
+                    {
+                        OrganizationUri = organizationServiceUri,
+                        DiscoveryUri = discoveryServiceUri,
+                        Credentials = clientCredentials,
+                        OrganizationServiceManagement = organizationServiceManagement,
+                        DiscoveryServiceManagement = discoveryServiceManagement
+                    };
+
+            config.Credentials = FulfillCredentials(config);
+
+            return config;
         }
 
         // ReSharper disable once UnusedMember.Global
@@ -147,6 +158,10 @@ namespace OwnSpace.CrmConnector
             {
                 config.OrganizationTokenResponse = tokenCredentials.SecurityTokenResponse;
             }
+            else
+            {
+                config.DiscoveryTokenResponse = tokenCredentials.SecurityTokenResponse;
+            }
 
             // ReSharper disable once PossibleNullReferenceException
             return (TProxy)classType
@@ -200,40 +215,52 @@ namespace OwnSpace.CrmConnector
 
         public class Configuration
         {
-            public string ServerAddress { get; set; }
+            internal Configuration(string serverAddress, string organizationName, AuthenticationProviderType endpointType)
+                : this()
+            {
+                ServerAddress = serverAddress;
+                OrganizationName = organizationName;
+                EndpointType = endpointType;
+            }
 
-            public string OrganizationName { get; set; }
+            private Configuration()
+            {
+            }
 
-            public Uri DiscoveryUri { get; set; }
+            public string ServerAddress { get; }
 
-            public Uri OrganizationUri { get; set; }
+            public string OrganizationName { get; }
+
+            public Uri DiscoveryUri { get; internal set; }
+
+            public Uri OrganizationUri { get; internal set; }
 
             public Uri HomeRealmUri { get; set; }
 
             public ClientCredentials DeviceCredentials { get; set; }
 
-            public ClientCredentials Credentials { get; set; }
+            public ClientCredentials Credentials { get; internal set; }
 
-            public AuthenticationProviderType EndpointType { get; set; }
+            public AuthenticationProviderType EndpointType { get; }
 
-            public string UserPrincipalName { get; set; }
+            public string UserPrincipalName { get; internal set; }
 
-            internal IServiceManagement<IOrganizationService> OrganizationServiceManagement { get; set; }
+            public IServiceManagement<IOrganizationService> OrganizationServiceManagement { get; internal set; }
 
-            internal SecurityTokenResponse OrganizationTokenResponse { get; set; }
+            public SecurityTokenResponse OrganizationTokenResponse { get; internal set; }
 
-            internal IServiceManagement<IDiscoveryService> DiscoveryServiceManagement { get; set; }
+            public IServiceManagement<IDiscoveryService> DiscoveryServiceManagement { get; internal set; }
 
-            internal SecurityTokenResponse DiscoveryTokenResponse { get; set; }
+            public SecurityTokenResponse DiscoveryTokenResponse { get; internal set; }
 
             public override bool Equals(object obj)
             {
-                if (obj == null || GetType() != obj.GetType())
+                var other = obj as Configuration;
+                if (other == null)
                 {
                     return false;
                 }
 
-                var other = (Configuration)obj;
                 if (!ServerAddress.Equals(other.ServerAddress, StringComparison.InvariantCultureIgnoreCase))
                 {
                     return false;
@@ -297,28 +324,29 @@ namespace OwnSpace.CrmConnector
 
             public override int GetHashCode()
             {
-                var returnHashCode = ServerAddress.GetHashCode() ^ OrganizationName.GetHashCode() ^ EndpointType.GetHashCode();
+                var hashCode = ServerAddress.GetHashCode() ^ OrganizationName.GetHashCode() ^ EndpointType.GetHashCode();
+                // ReSharper disable once NonReadonlyMemberInGetHashCode
                 if (Credentials != null)
                 {
                     if (EndpointType == AuthenticationProviderType.ActiveDirectory)
                     {
-                        return returnHashCode ^
+                        return hashCode ^
                                Credentials.Windows.ClientCredential.UserName.GetHashCode() ^
                                Credentials.Windows.ClientCredential.Domain.GetHashCode();
                     }
 
                     if (EndpointType == AuthenticationProviderType.LiveId)
                     {
-                        return returnHashCode ^
+                        return hashCode ^
                                Credentials.UserName.UserName.GetHashCode() ^
                                DeviceCredentials.UserName.UserName.GetHashCode() ^
                                DeviceCredentials.UserName.Password.GetHashCode();
                     }
 
-                    return returnHashCode ^ Credentials.UserName.UserName.GetHashCode();
+                    return hashCode ^ Credentials.UserName.UserName.GetHashCode();
                 }
 
-                return returnHashCode;
+                return hashCode;
             }
         }
     }
