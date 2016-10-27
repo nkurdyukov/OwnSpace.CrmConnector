@@ -15,10 +15,20 @@ namespace OwnSpace.CrmConnector
     public static class XrmConnection
     {
         // ReSharper disable once MemberCanBePrivate.Global
-        public static Uri GetOrganizationServiceUri(string url) => new Uri(url + "/XRMServices/2011/Organization.svc");
+        public static Uri GetOrganizationServiceUri(string url, string orgName = null)
+        {
+            url = url.EndsWith("/") ? url.Substring(0, url.Length - 1) : url;
+            orgName = string.IsNullOrEmpty(orgName) ? string.Empty : $"/{orgName}";
+            return new Uri($"{url}{orgName}/XRMServices/2011/Organization.svc");
+        }
 
         // ReSharper disable once MemberCanBePrivate.Global
-        public static Uri GetDiscoveryServiceUri(string url) => new Uri(url + "/XRMServices/2011/Discovery.svc");
+        public static Uri GetDiscoveryServiceUri(string url, string orgName = null)
+        {
+            url = url.EndsWith("/") ? url.Substring(0, url.Length - 1) : url;
+            orgName = string.IsNullOrEmpty(orgName) ? string.Empty : $"/{orgName}";
+            return new Uri($"{url}{orgName}/XRMServices/2011/Discovery.svc");
+        }
 
         // ReSharper disable once UnusedMember.Global
         public static Configuration GetConfiguration(string url, string orgName = null)
@@ -41,15 +51,25 @@ namespace OwnSpace.CrmConnector
                 var authCredentials = new AuthenticationCredentials();
                 authCredentials.ClientCredentials.UserName.UserName = dialog.Credentials.UserName;
                 authCredentials.ClientCredentials.UserName.Password = dialog.Credentials.Password;
-                return
+                var organizationServiceUri = GetOrganizationServiceUri(url, orgName);
+                var discoveryServiceUri = GetDiscoveryServiceUri(url, orgName);
+                var organizationServiceManagement = ServiceConfigurationFactory.CreateManagement<IOrganizationService>(organizationServiceUri);
+                var discoveryServiceManagement = ServiceConfigurationFactory.CreateManagement<IDiscoveryService>(discoveryServiceUri);
+                var config =
                     new Configuration
                         {
-                            OrganizationUri = GetOrganizationServiceUri(url),
-                            DiscoveryUri = GetDiscoveryServiceUri(url),
+                            OrganizationUri = organizationServiceUri,
+                            DiscoveryUri = discoveryServiceUri,
                             ServerAddress = url,
                             OrganizationName = orgName,
-                            Credentials = authCredentials.ClientCredentials
+                            Credentials = authCredentials.ClientCredentials,
+                            OrganizationServiceManagement = organizationServiceManagement,
+                            DiscoveryServiceManagement = discoveryServiceManagement,
+                            EndpointType = organizationServiceManagement.AuthenticationType
                         };
+                config.Credentials = FulfillCredentials(config);
+
+                return config;
             }
 
             return null;
@@ -77,7 +97,7 @@ namespace OwnSpace.CrmConnector
         // ReSharper disable once UnusedMember.Global
         public static DiscoveryServiceProxy GetDiscoveryServiceProxy(Configuration config)
         {
-            // ToDo: inside GetProxy similar logic already exists
+            // ToDo: inside GetProxy similar logic already exists - merge
             if (config.EndpointType == AuthenticationProviderType.ActiveDirectory &&
                 config.DiscoveryServiceManagement != null)
             {
@@ -92,38 +112,11 @@ namespace OwnSpace.CrmConnector
             where TProxy : ServiceProxy<TService>
         {
             // ToDo: avoid ugly type sniffing
-            Type classType;
             var isOrganizationServiceRequest = typeof(TService) == typeof(IOrganizationService);
-            var serviceUri = isOrganizationServiceRequest ? config.OrganizationUri : config.DiscoveryUri;
-
-            var serviceManagement =
-                    isOrganizationServiceRequest && config.OrganizationServiceManagement != null
-                        ? (IServiceManagement<TService>)config.OrganizationServiceManagement
-                        : ServiceConfigurationFactory.CreateManagement<TService>(serviceUri);
-
-            config.EndpointType = serviceManagement.AuthenticationType;
-            config.Credentials = FulfillCredentials(config);
-            if (isOrganizationServiceRequest)
-            {
-                if (config.OrganizationTokenResponse == null)
-                {
-                    config.OrganizationServiceManagement = (IServiceManagement<IOrganizationService>)serviceManagement;
-                }
-
-                classType = typeof(ManagedTokenOrganizationServiceProxy);
-            }
-            else
-            {
-                if (config.DiscoveryTokenResponse == null)
-                {
-                    config.DiscoveryServiceManagement = (IServiceManagement<IDiscoveryService>)serviceManagement;
-                }
-
-                classType = typeof(ManagedTokenDiscoveryServiceProxy);
-            }
-
+            var classType = isOrganizationServiceRequest ? typeof(ManagedTokenOrganizationServiceProxy) : typeof(ManagedTokenDiscoveryServiceProxy);
+            var serviceManagement = isOrganizationServiceRequest ? (IServiceManagement<TService>)config.OrganizationServiceManagement : (IServiceManagement<TService>)config.DiscoveryServiceManagement;
             var authCredentials = new AuthenticationCredentials();
-            if (string.IsNullOrWhiteSpace(config.UserPrincipalName))
+            if (string.IsNullOrEmpty(config.UserPrincipalName))
             {
                 authCredentials.ClientCredentials = config.Credentials;
             }
@@ -132,33 +125,33 @@ namespace OwnSpace.CrmConnector
                 authCredentials.UserPrincipalName = config.UserPrincipalName;
             }
 
-            if (config.EndpointType != AuthenticationProviderType.ActiveDirectory)
+            if (config.EndpointType == AuthenticationProviderType.ActiveDirectory)
             {
-                if (config.EndpointType == AuthenticationProviderType.LiveId)
-                {
-                    authCredentials.SupportingCredentials =
-                        new AuthenticationCredentials
-                            {
-                                ClientCredentials = config.DeviceCredentials
-                            };
-                }
-
-                var tokenCredentials = serviceManagement.Authenticate(authCredentials);
-                if (isOrganizationServiceRequest)
-                {
-                    config.OrganizationTokenResponse = tokenCredentials.SecurityTokenResponse;
-                }
-
                 // ReSharper disable once PossibleNullReferenceException
                 return (TProxy)classType
-                    .GetConstructor(new[] { typeof(IServiceManagement<TService>), typeof(SecurityTokenResponse) })
-                    .Invoke(new object[] { serviceManagement, tokenCredentials.SecurityTokenResponse });
+                    .GetConstructor(new[] { typeof(IServiceManagement<TService>), typeof(ClientCredentials) })
+                    .Invoke(new object[] { serviceManagement, authCredentials.ClientCredentials });
+            }
+
+            if (config.EndpointType == AuthenticationProviderType.LiveId)
+            {
+                authCredentials.SupportingCredentials =
+                    new AuthenticationCredentials
+                        {
+                            ClientCredentials = config.DeviceCredentials
+                        };
+            }
+
+            var tokenCredentials = serviceManagement.Authenticate(authCredentials);
+            if (isOrganizationServiceRequest)
+            {
+                config.OrganizationTokenResponse = tokenCredentials.SecurityTokenResponse;
             }
 
             // ReSharper disable once PossibleNullReferenceException
             return (TProxy)classType
-                .GetConstructor(new[] { typeof(IServiceManagement<TService>), typeof(ClientCredentials) })
-                .Invoke(new object[] { serviceManagement, authCredentials.ClientCredentials });
+                .GetConstructor(new[] { typeof(IServiceManagement<TService>), typeof(SecurityTokenResponse) })
+                .Invoke(new object[] { serviceManagement, tokenCredentials.SecurityTokenResponse });
         }
 
         private static ClientCredentials FulfillCredentials(Configuration config)
@@ -168,32 +161,40 @@ namespace OwnSpace.CrmConnector
                 throw new Exception("Credentials not provided");
             }
 
-            ClientCredentials credentials;
             switch (config.EndpointType)
             {
                 case AuthenticationProviderType.ActiveDirectory:
-                    var clientCredential = config.Credentials.Windows.ClientCredential;
-                    if (clientCredential.SecurePassword == null)
-                    {
-                        return null;
-                    }
+                     {
+                         var clientCredential = config.Credentials.Windows.ClientCredential;
+                         if (clientCredential.SecurePassword == null)
+                         {
+                             return null;
+                         }
 
-                    credentials = new ClientCredentials();
-                    credentials.Windows.ClientCredential = new NetworkCredential(clientCredential.UserName, clientCredential.SecurePassword, clientCredential.Domain);
+                         var credentials = new ClientCredentials();
+                         credentials.Windows.ClientCredential = new NetworkCredential(clientCredential.UserName, clientCredential.SecurePassword, clientCredential.Domain);
 
-                    return credentials;
+                         return credentials;
+                     }
+
                 case AuthenticationProviderType.LiveId:
                 case AuthenticationProviderType.Federation:
-                    credentials = new ClientCredentials();
-                    credentials.UserName.UserName = config.Credentials.UserName.UserName;
-                    credentials.UserName.Password = config.Credentials.UserName.Password;
-                    return credentials;
+                    {
+                        var credentials = new ClientCredentials();
+                        credentials.UserName.UserName = config.Credentials.UserName.UserName;
+                        credentials.UserName.Password = config.Credentials.UserName.Password;
+
+                        return credentials;
+                    }
+
                 case AuthenticationProviderType.OnlineFederation:
                     config.UserPrincipalName = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
 
                     return null;
-                default:
+                case AuthenticationProviderType.None:
                     return null;
+                default:
+                    throw new ArgumentOutOfRangeException();
             }
         }
 
